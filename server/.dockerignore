@@ -1,0 +1,7 @@
+node_modules
+npm-debug.log
+Dockerfile
+.dockerignore
+runtime.err.log
+runtime.out.log
+.env
