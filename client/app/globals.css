@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #06131a;
+  --foreground: #ecf7f8;
+  --surface: rgba(8, 28, 36, 0.72);
+  --surface-strong: rgba(8, 23, 31, 0.92);
+  --surface-soft: rgba(216, 245, 247, 0.08);
+  --line: rgba(190, 235, 236, 0.16);
+  --line-strong: rgba(190, 235, 236, 0.28);
+  --accent: #7ef0d6;
+  --accent-strong: #0fbf9b;
+  --ink: #05232b;
 }
 
 @theme inline {
@@ -12,15 +20,109 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), sans-serif;
+  min-height: 100vh;
+  background-image:
+    radial-gradient(circle at top left, rgba(126, 240, 214, 0.22), transparent 28%),
+    radial-gradient(circle at 82% 14%, rgba(73, 147, 255, 0.2), transparent 24%),
+    radial-gradient(circle at 50% 120%, rgba(15, 191, 155, 0.18), transparent 34%),
+    linear-gradient(180deg, #08141c 0%, #06131a 42%, #041018 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(circle at center, black 38%, transparent 88%);
+  opacity: 0.5;
+}
+
+::selection {
+  background: rgba(126, 240, 214, 0.35);
+  color: white;
+}
+
+.glass-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(22px);
+}
+
+.glass-panel-strong {
+  background: var(--surface-strong);
+  border: 1px solid var(--line-strong);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(22px);
+}
+
+.soft-grid {
+  background-image:
+    linear-gradient(rgba(190, 235, 236, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(190, 235, 236, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.hero-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(18px);
+  opacity: 0.5;
+  animation: drift 14s ease-in-out infinite;
+}
+
+.reveal-up {
+  animation: reveal-up 0.7s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.reveal-delay-1 {
+  animation-delay: 0.08s;
+}
+
+.reveal-delay-2 {
+  animation-delay: 0.16s;
+}
+
+.reveal-delay-3 {
+  animation-delay: 0.24s;
+}
+
+@keyframes drift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -12px, 0) scale(1.04);
+  }
+}
+
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 20px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }

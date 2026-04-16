@@ -53,7 +53,7 @@ async function apiFetch(path: string, init?: RequestInit) {
   }
 }
 
-export type MonitorPayload = { url: string; githubUrl?: string };
+export type MonitorPayload = { url: string; githubUrl?: string; enableSmokeTests?: boolean };
 
 export type ScanJobStartResponse = {
   jobId: string;
@@ -96,7 +96,44 @@ export type ScanRecord = {
     pagesWithVisualChanges?: number;
     pagesWithDomChanges?: number;
   };
+  report_payload?: MonitorResponse;
   created_at: string;
+};
+
+export type FunctionalRegression = {
+  pageUrl: string;
+  responseCode: number | null;
+  loadTimeMs: number | null;
+  testedAt: string;
+  status: "Healthy" | "Failed";
+  coreElements: Array<{
+    name: string;
+    selector: string;
+    exists: boolean;
+  }>;
+  missingCoreElements: string[];
+  consoleErrors: string[];
+  brokenLinks: Array<{
+    url: string;
+    statusCode: number | null;
+    error?: string;
+  }>;
+  form: {
+    available: boolean;
+    count: number;
+    interactiveControlCount: number;
+  };
+  flow: {
+    attempted: boolean;
+    passed: boolean;
+    step: string | null;
+    targetUrl: string | null;
+    details: string;
+  };
+  requestFailures: Array<{
+    url: string;
+    error: string;
+  }>;
 };
 
 export type MonitorPageResult = {
@@ -137,6 +174,7 @@ export type MonitorPageResult = {
     }>;
     unifiedDiff?: string;
   };
+  functionalRegression: FunctionalRegression;
 };
 
 export type MonitorResponse = {
@@ -147,6 +185,7 @@ export type MonitorResponse = {
   siteUrl: string;
   siteName: string;
   githubUrl: string | null;
+  smokeTestingEnabled: boolean;
   summary: {
     totalPages: number;
     newPages: number;
@@ -154,6 +193,26 @@ export type MonitorResponse = {
     pagesWithDomChanges: number;
     highestVisualMismatch: number;
     overallStatus: "Pass" | "Warning" | "Critical";
+  };
+  functionalSummary: {
+    enabled: boolean;
+    totalPages: number;
+    checkedPages: number;
+    failedPages: number;
+    consoleErrors: number;
+    brokenLinks: number;
+    requestFailures: number;
+    averageLoadTimeMs: number | null;
+    overallStatus: "Disabled" | "Healthy" | "Failed";
+  };
+  workerSystem: {
+    queueDepth: number;
+    activeWorkers: number;
+    maxWorkers: number;
+    autoScaling: boolean;
+    distributedReady: boolean;
+    retryLimit: number;
+    timeoutMs: number;
   };
   visualRegression: {
     mismatchPixels?: number;
@@ -176,6 +235,7 @@ export type MonitorResponse = {
     changedSelectors: string[];
     diffLog: Array<Record<string, unknown>>;
   };
+  functionalRegression: FunctionalRegression;
   pageResults: MonitorPageResult[];
   codeRegression: {
     baselineCreated: boolean;

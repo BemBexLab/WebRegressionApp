@@ -7,11 +7,13 @@ import { compareDOM } from "../services/domDiffService.js";
 import { scanGitHubRepository } from "../services/githubRepoService.js";
 import { generateReportPdf } from "../services/reportService.js";
 import { captureScreenshot } from "../services/screenshotService.js";
+import { createDefaultSmokeResult, runSmokeTest } from "../services/smokeTestService.js";
 import { compareImages } from "../services/visualDiffService.js";
+import { enqueueWorkerJob, getWorkerSystemSnapshot } from "../services/workerQueueService.js";
 
 const router = Router();
 const MAX_PAGES_PER_SCAN =
-  Number(process.env.MAX_PAGES_PER_SCAN) || 0;
+  Number(process.env.MAX_PAGES_PER_SCAN) || 8;
 const PIXELMATCH_THRESHOLD = Number(process.env.PIXELMATCH_THRESHOLD) || 0.2;
 const SUPABASE_SCAN_BUCKET = process.env.SUPABASE_SCAN_BUCKET || "scan-artifacts";
 const STORAGE_UPLOAD_RETRIES = Math.max(1, Number(process.env.STORAGE_UPLOAD_RETRIES) || 4);
@@ -367,6 +369,32 @@ function summarizePages(pageResults) {
   };
 }
 
+function summarizeFunctionalChecks(pageResults, enabled) {
+  const functionalResults = pageResults.map((page) => page.functionalRegression).filter(Boolean);
+  const failedPages = functionalResults.filter((entry) => entry.status === "Failed").length;
+  const consoleErrors = functionalResults.reduce((sum, entry) => sum + (entry.consoleErrors?.length ?? 0), 0);
+  const brokenLinks = functionalResults.reduce((sum, entry) => sum + (entry.brokenLinks?.length ?? 0), 0);
+  const requestFailures = functionalResults.reduce((sum, entry) => sum + (entry.requestFailures?.length ?? 0), 0);
+  const averageLoadTimeMs =
+    functionalResults.length > 0
+      ? Math.round(
+          functionalResults.reduce((sum, entry) => sum + (entry.loadTimeMs ?? 0), 0) / functionalResults.length
+        )
+      : null;
+
+  return {
+    enabled,
+    totalPages: pageResults.length,
+    checkedPages: functionalResults.length,
+    failedPages,
+    consoleErrors,
+    brokenLinks,
+    requestFailures,
+    averageLoadTimeMs,
+    overallStatus: !enabled ? "Disabled" : failedPages > 0 ? "Failed" : "Healthy"
+  };
+}
+
 function buildAggregateDomLog(pageResults) {
   return pageResults
     .flatMap((page) =>
@@ -409,6 +437,11 @@ function buildFailedPageResult({ pageUrl, error }) {
       changedSelectors: [],
       diffLog: [],
       error: message
+    },
+    functionalRegression: {
+      ...createDefaultSmokeResult(pageUrl),
+      status: "Failed",
+      consoleErrors: [message]
     }
   };
 }
@@ -499,7 +532,7 @@ async function fetchJobRecord(jobId) {
   return data ? fromDbJobPayload(data) : null;
 }
 
-async function scanPage({ website, pageUrl, timestamp }) {
+async function scanPage({ website, pageUrl, timestamp, enableSmokeTests }) {
   const pagePath = getPagePath(pageUrl);
   const {
     pageId,
@@ -518,6 +551,12 @@ async function scanPage({ website, pageUrl, timestamp }) {
     viewport: website.viewport || "desktop",
     ignoredSelectors: Array.isArray(website.ignored_selectors) ? website.ignored_selectors : []
   });
+  const functionalRegression = enableSmokeTests
+    ? await runSmokeTest({
+        url: pageUrl,
+        viewport: website.viewport || "desktop"
+      })
+    : createDefaultSmokeResult(pageUrl);
 
   const currentImageUrl = await uploadArtifact(currentImageKey, imageBuffer, "image/png");
   const baselineRecord = await getPageBaseline({ website, pagePath });
@@ -560,7 +599,8 @@ async function scanPage({ website, pageUrl, timestamp }) {
         },
         changedSelectors: [],
         diffLog: []
-      }
+      },
+      functionalRegression
     };
   }
 
@@ -601,7 +641,8 @@ async function scanPage({ website, pageUrl, timestamp }) {
         },
         changedSelectors: [],
         diffLog: []
-      }
+      },
+      functionalRegression
     };
   }
 
@@ -635,16 +676,17 @@ async function scanPage({ website, pageUrl, timestamp }) {
       currentImageUrl,
       diffImageUrl
     },
-    domRegression: domChanges
+    domRegression: domChanges,
+    functionalRegression
   };
 }
 
-async function runScanJob({ jobId, url, githubUrl }) {
+async function runScanJob({ jobId, url, githubUrl, enableSmokeTests = false, workerId = null, attempt = 1 }) {
   try {
     updateJob(jobId, {
       status: "running",
       progressPercentage: 5,
-      message: "Preparing scan"
+      message: workerId ? `Preparing scan in ${workerId} (attempt ${attempt})` : "Preparing scan"
     });
 
     await ensureScanBucket();
@@ -700,7 +742,8 @@ async function runScanJob({ jobId, url, githubUrl }) {
         pageResult = await scanPage({
           website,
           pageUrl,
-          timestamp
+          timestamp,
+          enableSmokeTests
         });
       } catch (pageError) {
         pageResult = buildFailedPageResult({ pageUrl, error: pageError });
@@ -717,6 +760,7 @@ async function runScanJob({ jobId, url, githubUrl }) {
     }
 
     const summary = summarizePages(pageResults);
+    const functionalSummary = summarizeFunctionalChecks(pageResults, enableSmokeTests);
     const rootPage = pageResults.find((page) => page.path === "/") ?? pageResults[0];
     const aggregateDomLog = buildAggregateDomLog(pageResults);
     let codeRegression = null;
@@ -745,10 +789,14 @@ async function runScanJob({ jobId, url, githubUrl }) {
       siteUrl: normalizedRootUrl,
       siteName,
       githubUrl: githubUrl || null,
+      smokeTestingEnabled: enableSmokeTests,
       scanId: null,
       summary,
+      functionalSummary,
+      workerSystem: getWorkerSystemSnapshot(),
       visualRegression: rootPage.visualRegression,
       domRegression: rootPage.domRegression,
+      functionalRegression: rootPage.functionalRegression,
       pageResults,
       codeRegression
     };
@@ -797,6 +845,7 @@ async function runScanJob({ jobId, url, githubUrl }) {
       message: "Scan failed",
       error: normalizedError
     });
+    throw new Error(normalizedError);
   }
 }
 
@@ -884,11 +933,16 @@ router.get("/jobs/:jobId", async (req, res) => {
 
     if (shouldRunOnPoll) {
       const requestPayload = persistedJob.result.request;
-      await runScanJob({
-        jobId,
-        url: requestPayload.url,
-        githubUrl: requestPayload.githubUrl
-      });
+      try {
+        await runScanJob({
+          jobId,
+          url: requestPayload.url,
+          githubUrl: requestPayload.githubUrl,
+          enableSmokeTests: Boolean(requestPayload.enableSmokeTests)
+        });
+      } catch {
+        // The job record is already updated to failed; return the latest state below.
+      }
       const latest = scanJobs.get(jobId) ?? (await fetchJobRecord(jobId));
       if (!latest) {
         return res.status(404).json({ error: "Scan job not found." });
@@ -903,7 +957,7 @@ router.get("/jobs/:jobId", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const { url, githubUrl } = req.body ?? {};
+  const { url, githubUrl, enableSmokeTests } = req.body ?? {};
 
   try {
     normalizePageUrl(url);
@@ -925,7 +979,8 @@ router.post("/", async (req, res) => {
     result: {
       request: {
         url,
-        githubUrl: githubUrl || null
+        githubUrl: githubUrl || null,
+        enableSmokeTests: Boolean(enableSmokeTests)
       }
     },
     error: null,
@@ -940,10 +995,46 @@ router.post("/", async (req, res) => {
   }
 
   if (!isServerlessRuntime()) {
-    void runScanJob({
-      jobId,
-      url,
-      githubUrl
+    const workerSnapshot = enqueueWorkerJob({
+      payload: {
+        jobId,
+        url,
+        githubUrl,
+        enableSmokeTests: Boolean(enableSmokeTests)
+      },
+      handler: runScanJob,
+      onStart: ({ workerId, activeWorkers, maxWorkers, queuedJobs }) => {
+        updateJob(jobId, {
+          status: "running",
+          progressPercentage: 2,
+          message: `Assigned to ${workerId}. ${activeWorkers}/${maxWorkers} worker(s) active, ${queuedJobs} job(s) waiting.`
+        });
+      },
+      onRetry: ({ workerId, attempt, retriesRemaining, error }) => {
+        updateJob(jobId, {
+          status: "queued",
+          progressPercentage: 2,
+          message: `Retrying in ${workerId} after attempt ${attempt}. ${retriesRemaining} retry/retries remaining.`,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      },
+      onFailure: ({ error }) => {
+        const normalizedError = normalizeErrorMessage(error);
+        updateJob(jobId, {
+          status: "failed",
+          message: `Scan failed: ${normalizedError}`,
+          error: normalizedError
+        });
+      },
+      onTimeout: ({ workerId, attempt, timeoutMs }) => {
+        updateJob(jobId, {
+          message: `Still scanning in ${workerId} after ${Math.round(timeoutMs / 1000)}s (attempt ${attempt}). Large sites may take longer.`
+        });
+      }
+    });
+    updateJob(jobId, {
+      message: `Queued in worker pool. ${workerSnapshot.queueDepth} job(s) ahead.`,
+      progressPercentage: 1
     });
   } else {
     updateJob(jobId, {
