@@ -37,6 +37,13 @@ function getFunctionalRegression(page = {}) {
       attempted: false,
       passed: true,
       details: "Functional data was not captured for this scan."
+    },
+    checks: [],
+    checkSummary: {
+      passed: 0,
+      warning: 0,
+      failed: 0,
+      skipped: 0
     }
   };
 }
@@ -47,6 +54,7 @@ function hasDetectedIssue(page = {}) {
     (page.visualRegression?.mismatchPercentage ?? 0) > 0 ||
     (page.domRegression?.summary?.total ?? 0) > 0 ||
     functional.status === "Failed" ||
+    functional.status === "Warning" ||
     (functional.brokenLinks?.length ?? 0) > 0 ||
     (functional.consoleErrors?.length ?? 0) > 0
   );

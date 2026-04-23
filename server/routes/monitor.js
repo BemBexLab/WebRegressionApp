@@ -372,6 +372,7 @@ function summarizePages(pageResults) {
 function summarizeFunctionalChecks(pageResults, enabled) {
   const functionalResults = pageResults.map((page) => page.functionalRegression).filter(Boolean);
   const failedPages = functionalResults.filter((entry) => entry.status === "Failed").length;
+  const warningPages = functionalResults.filter((entry) => entry.status === "Warning").length;
   const consoleErrors = functionalResults.reduce((sum, entry) => sum + (entry.consoleErrors?.length ?? 0), 0);
   const brokenLinks = functionalResults.reduce((sum, entry) => sum + (entry.brokenLinks?.length ?? 0), 0);
   const requestFailures = functionalResults.reduce((sum, entry) => sum + (entry.requestFailures?.length ?? 0), 0);
@@ -387,11 +388,12 @@ function summarizeFunctionalChecks(pageResults, enabled) {
     totalPages: pageResults.length,
     checkedPages: functionalResults.length,
     failedPages,
+    warningPages,
     consoleErrors,
     brokenLinks,
     requestFailures,
     averageLoadTimeMs,
-    overallStatus: !enabled ? "Disabled" : failedPages > 0 ? "Failed" : "Healthy"
+    overallStatus: !enabled ? "Disabled" : failedPages > 0 ? "Failed" : warningPages > 0 ? "Warning" : "Healthy"
   };
 }
 
