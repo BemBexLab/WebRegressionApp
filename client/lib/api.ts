@@ -1,4 +1,5 @@
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "";
+const RAW_SUPABASE_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
 
 function normalizeApiBase(input: string) {
   if (!/^https?:\/\//i.test(input)) {
@@ -26,6 +27,7 @@ function resolveFallbackApiBase() {
 
 const FALLBACK_API_BASE = resolveFallbackApiBase();
 const API_BASE = normalizeApiBase(RAW_API_BASE);
+const SUPABASE_BASE = normalizeApiBase(RAW_SUPABASE_BASE);
 
 async function apiFetch(path: string, init?: RequestInit) {
   const base = API_BASE || FALLBACK_API_BASE;
@@ -297,6 +299,14 @@ export type MonitorResponse = {
 export function imageUrl(path: string | null) {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return path;
+  if (path.startsWith("/storage/")) {
+    if (!SUPABASE_BASE) {
+      throw new Error(
+        "Missing NEXT_PUBLIC_SUPABASE_URL. Set it to your local Docker Supabase API origin, e.g. http://127.0.0.1:54321."
+      );
+    }
+    return `${SUPABASE_BASE}${path}`;
+  }
   return `${API_BASE || FALLBACK_API_BASE}${path}`;
 }
 

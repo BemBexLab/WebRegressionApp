@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
 
-import { supabase } from "../lib/supabase.js";
+import { buildSupabaseStoragePublicPath, supabase } from "../lib/supabase.js";
 import { crawlSitePages } from "../services/crawlService.js";
 import { compareDOM } from "../services/domDiffService.js";
 import { scanGitHubRepository } from "../services/githubRepoService.js";
@@ -36,9 +36,22 @@ function isServerlessRuntime() {
 
 function normalizeErrorMessage(error) {
   const raw = error instanceof Error ? error.message : String(error ?? "Unknown scan failure.");
+  const missingTableMatch =
+    raw.match(/Could not find the table 'public\.([^']+)' in the schema cache/i) ||
+    raw.match(/relation "public\.([^"]+)" does not exist/i) ||
+    raw.match(/relation "([^"]+)" does not exist/i);
 
   if (raw.includes("Error code 521") || raw.includes("Web server is down")) {
-    return "Supabase endpoint is unreachable (Cloudflare 521). Verify SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY and check Supabase project status.";
+    return "Supabase endpoint is unreachable. Verify the local Docker Supabase stack is running and check SUPABASE_INTERNAL_URL/SUPABASE_PUBLIC_URL/SUPABASE_SERVICE_ROLE_KEY.";
+  }
+
+  if (/ECONNREFUSED|fetch failed|network request failed/i.test(raw)) {
+    return "Supabase endpoint is unreachable. Start the local Docker Supabase stack and confirm the app is using the correct internal and public Supabase URLs.";
+  }
+
+  if (missingTableMatch) {
+    const tableName = missingTableMatch[1];
+    return `Supabase local schema is missing table '${tableName}'. Apply the repo migrations with 'npx supabase db reset' (or 'npx supabase migration up') and retry.`;
   }
 
   if (raw.toLowerCase().includes("<html")) {
@@ -108,8 +121,7 @@ function getPageArtifactKeys({ websiteId, pagePath, timestamp }) {
 }
 
 function toPublicStorageUrl(objectKey) {
-  const { data } = supabase.storage.from(SUPABASE_SCAN_BUCKET).getPublicUrl(objectKey);
-  return data.publicUrl;
+  return buildSupabaseStoragePublicPath(SUPABASE_SCAN_BUCKET, objectKey);
 }
 
 function isSupabaseObjectKey(value) {
@@ -993,7 +1005,8 @@ router.post("/", async (req, res) => {
   try {
     await createJobRecord(job);
   } catch (error) {
-    return res.status(500).json({ error: `Failed to create scan job: ${error.message}` });
+    const normalizedError = normalizeErrorMessage(error);
+    return res.status(500).json({ error: `Failed to create scan job: ${normalizedError}` });
   }
 
   if (!isServerlessRuntime()) {

@@ -17,7 +17,7 @@ function resolveImageUrl(path, baseUrl) {
   if (!path) return "";
   if (/^https?:\/\//i.test(path)) return path;
   if (!baseUrl) return path;
-  return `${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? "" : "/"}${path}`;
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 function getFunctionalRegression(page = {}) {
