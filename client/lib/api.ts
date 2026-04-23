@@ -105,7 +105,7 @@ export type FunctionalRegression = {
   responseCode: number | null;
   loadTimeMs: number | null;
   testedAt: string;
-  status: "Healthy" | "Failed";
+  status: "Healthy" | "Warning" | "Failed";
   coreElements: Array<{
     name: string;
     selector: string;
@@ -122,6 +122,9 @@ export type FunctionalRegression = {
     available: boolean;
     count: number;
     interactiveControlCount: number;
+    requiredFieldCount?: number;
+    semanticValidationCount?: number;
+    formWithSubmitCount?: number;
   };
   flow: {
     attempted: boolean;
@@ -134,6 +137,32 @@ export type FunctionalRegression = {
     url: string;
     error: string;
   }>;
+  checks?: Array<{
+    id: string;
+    label: string;
+    status: "Passed" | "Warning" | "Failed" | "Skipped";
+    applicable: boolean;
+    summary: string;
+    findings: string[];
+  }>;
+  checkSummary?: {
+    passed: number;
+    warning: number;
+    failed: number;
+    skipped: number;
+  };
+  metrics?: {
+    internalLinksChecked: number;
+    navLinksChecked: number;
+    buttonTargetsChecked: number;
+    formsDetected: number;
+    authArtifactsDetected: number;
+    searchArtifactsDetected: number;
+    apiFailures: number;
+    cookiesObserved: number;
+    fileInputsDetected: number;
+    downloadLinksDetected: number;
+  };
 };
 
 export type MonitorPageResult = {
@@ -199,11 +228,12 @@ export type MonitorResponse = {
     totalPages: number;
     checkedPages: number;
     failedPages: number;
+    warningPages: number;
     consoleErrors: number;
     brokenLinks: number;
     requestFailures: number;
     averageLoadTimeMs: number | null;
-    overallStatus: "Disabled" | "Healthy" | "Failed";
+    overallStatus: "Disabled" | "Healthy" | "Warning" | "Failed";
   };
   workerSystem: {
     queueDepth: number;

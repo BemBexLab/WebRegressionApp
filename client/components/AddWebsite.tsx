@@ -37,7 +37,10 @@ function fallbackFunctionalRegression(pageUrl = "") {
     form: {
       available: false,
       count: 0,
-      interactiveControlCount: 0
+      interactiveControlCount: 0,
+      requiredFieldCount: 0,
+      semanticValidationCount: 0,
+      formWithSubmitCount: 0
     },
     flow: {
       attempted: false,
@@ -46,7 +49,26 @@ function fallbackFunctionalRegression(pageUrl = "") {
       targetUrl: null,
       details: "Functional data was not captured for this scan."
     },
-    requestFailures: []
+    requestFailures: [],
+    checks: [],
+    checkSummary: {
+      passed: 0,
+      warning: 0,
+      failed: 0,
+      skipped: 0
+    },
+    metrics: {
+      internalLinksChecked: 0,
+      navLinksChecked: 0,
+      buttonTargetsChecked: 0,
+      formsDetected: 0,
+      authArtifactsDetected: 0,
+      searchArtifactsDetected: 0,
+      apiFailures: 0,
+      cookiesObserved: 0,
+      fileInputsDetected: 0,
+      downloadLinksDetected: 0
+    }
   };
 }
 
@@ -57,7 +79,16 @@ function getFunctionalRegression(page: Pick<MonitorPageResult, "url"> & Partial<
 const hasIssue = (page: MonitorPageResult) =>
   (page.visualRegression?.mismatchPercentage ?? 0) > 0 ||
   (page.domRegression?.summary?.total ?? 0) > 0 ||
-  getFunctionalRegression(page).status === "Failed";
+  getFunctionalRegression(page).status !== "Healthy";
+
+const functionalTone = (status: string) =>
+  status === "Failed"
+    ? "border-red-300/20 bg-red-300/10 text-red-50"
+    : status === "Warning"
+      ? "border-amber-300/20 bg-amber-300/10 text-amber-50"
+      : status === "Passed"
+        ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-50"
+        : "border-white/10 bg-white/6 text-slate-100";
 
 function Card({
   children,
@@ -196,6 +227,7 @@ function DetailView({ page, history, sliderValue }: { page: MonitorPageResult; h
   const currentImage = imageUrl(page.visualRegression.currentImageUrl) ?? "";
   const diffImage = imageUrl(page.visualRegression.diffImageUrl);
   const functional = getFunctionalRegression(page);
+  const functionalChecks = functional.checks ?? [];
   const timeline = history
     .map((scan) => {
       const current = scan.report_payload?.pageResults?.find((entry) => entry.path === page.path);
@@ -265,7 +297,37 @@ function DetailView({ page, history, sliderValue }: { page: MonitorPageResult; h
               <Stat label="Broken Links" value={functional.brokenLinks.length} />
               <Stat label="Console" value={functional.consoleErrors.length} />
               <Stat label="Forms" value={functional.form.count} />
-              <Stat label="Flow" value={functional.flow.passed ? "Pass" : "Fail"} />
+              <Stat label="Flow" value={functional.flow.attempted ? (functional.flow.passed ? "Pass" : "Fail") : "Skip"} />
+              <Stat label="Checks Passed" value={functional.checkSummary?.passed ?? 0} />
+              <Stat label="Warnings" value={functional.checkSummary?.warning ?? 0} />
+              <Stat label="Checks Failed" value={functional.checkSummary?.failed ?? 0} />
+              <Stat label="Skipped" value={functional.checkSummary?.skipped ?? 0} />
+            </div>
+            <div className="mt-4 space-y-3">
+              {functionalChecks.length > 0 ? (
+                functionalChecks.map((check) => (
+                  <div key={`${page.pageId}-${check.id}`} className={cx("rounded-2xl border p-4", functionalTone(check.status))}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm font-semibold">{check.label}</p>
+                      <span className="rounded-full border border-current/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
+                        {check.status}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm opacity-90">{check.summary}</p>
+                    {check.findings.length > 0 ? (
+                      <div className="mt-3 space-y-2">
+                        {check.findings.map((finding, index) => (
+                          <p key={`${page.pageId}-${check.id}-${index}`} className="text-xs leading-5 opacity-80">
+                            {finding}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-slate-300/78">No category-level functional checks were captured for this page.</p>
+              )}
             </div>
             <div className="mt-4 space-y-2">
               {functional.consoleErrors.length > 0 ? functional.consoleErrors.map((error, index) => <pre key={`${page.pageId}-console-${index}`} className="overflow-auto rounded-2xl border border-red-300/14 bg-red-300/8 p-3 text-xs text-red-50">{error}</pre>) : <p className="text-sm text-slate-300/78">No console errors captured for this page.</p>}
@@ -470,8 +532,8 @@ export default function AddWebsite() {
               <div>
                 <p className="text-sm font-semibold text-white">Enable smoke testing</p>
                 <p className="mt-1 text-sm leading-6 text-slate-300/78">
-                  Add status checks, load-time measurement, console monitoring, broken-link detection,
-                  form coverage, and a lightweight contact-flow test.
+                  Run deeper functional auditing for navigation, forms, auth, search, API failures,
+                  cookies, compatibility, file handling, and security sanity checks.
                 </p>
               </div>
             </label>
@@ -577,11 +639,12 @@ export default function AddWebsite() {
                   </div>
                 </div>
                 <div className="rounded-[24px] border border-white/10 bg-white/5 p-5">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-300/66">Smoke Summary</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-300/66">Functional Summary</p>
                   <div className="mt-4 space-y-3">
                     <div className="flex items-center justify-between text-sm"><span className="text-slate-300/72">Enabled</span><span className="font-semibold text-white">{result.smokeTestingEnabled ? "Yes" : "No"}</span></div>
                     <div className="flex items-center justify-between text-sm"><span className="text-slate-300/72">Status</span><span className="font-semibold text-white">{result.functionalSummary.overallStatus}</span></div>
                     <div className="flex items-center justify-between text-sm"><span className="text-slate-300/72">Failed Pages</span><span className="font-semibold text-white">{result.functionalSummary.failedPages}</span></div>
+                    <div className="flex items-center justify-between text-sm"><span className="text-slate-300/72">Warning Pages</span><span className="font-semibold text-white">{result.functionalSummary.warningPages}</span></div>
                     <div className="flex items-center justify-between text-sm"><span className="text-slate-300/72">Broken Links</span><span className="font-semibold text-white">{result.functionalSummary.brokenLinks}</span></div>
                     <div className="flex items-center justify-between text-sm"><span className="text-slate-300/72">Avg Load</span><span className="font-semibold text-white">{formatDuration(result.functionalSummary.averageLoadTimeMs)}</span></div>
                   </div>
