@@ -249,6 +249,14 @@ async function extractPageInventory(page) {
       return rect.width > 0 && rect.height > 0;
     };
     const unique = (values) => [...new Set(values.filter(Boolean))];
+    const criticalElementsResults = (criticalSelectors || []).map(selector => {
+      const el = document.querySelector(selector);
+      return {
+        selector,
+        exists: !!el,
+        visible: isVisible(el)
+      };
+    });
     const anchors = [...document.querySelectorAll("a[href]")];
     const visibleAnchors = anchors.filter(isVisible);
     const headingText = unique(
@@ -366,6 +374,7 @@ async function extractPageInventory(page) {
         { name: "header", selector: "header, [role='banner'], nav", exists: Boolean(document.querySelector("header, [role='banner'], nav")) },
         { name: "footer", selector: "footer, [role='contentinfo']", exists: Boolean(document.querySelector("footer, [role='contentinfo']")) }
       ],
+      criticalElementsResults,
       links: unique(visibleAnchors.map((anchor) => anchor.getAttribute("href") || "")),
       navLinks: unique([...document.querySelectorAll("nav a[href], header a[href]")].filter(isVisible).map((anchor) => anchor.getAttribute("href") || "")),
       buttons,
@@ -397,7 +406,7 @@ async function extractPageInventory(page) {
           toText(document.body?.innerText || "")
         )
     };
-  });
+  }, userCriticalSelectors);
 }
 
 function buildKeywordFromInventory(inventory) {
@@ -1177,9 +1186,35 @@ function assessSecurity(pageUrl, inventory, authCheck) {
   });
 }
 
+function assessCriticalElements(inventory) {
+  const results = inventory.criticalElementsResults || [];
+  if (results.length === 0) {
+    return createCheck({
+      id: "critical-elements",
+      label: "Critical Elements",
+      status: CHECK_STATUS.SKIPPED,
+      summary: "No custom critical elements defined for this site."
+    });
+  }
+  const missing = results.filter(r => !r.exists);
+  const findings = missing.map(m => `Element '${m.selector}' was not found in the DOM.`);
+  
+  return createCheck({
+    id: "critical-elements",
+    label: "Critical Elements",
+    applicable: true,
+    status: missing.length > 0 ? CHECK_STATUS.FAILED : CHECK_STATUS.PASSED,
+    summary: missing.length > 0 
+      ? `${missing.length} of ${results.length} critical elements are missing.`
+      : `All ${results.length} critical elements are present.`,
+    findings
+  });
+}
+
 export async function runSmokeTest({
   url,
-  viewport = "desktop"
+  viewport = "desktop",
+  criticalElements = []
 }) {
   const browser = await launchBrowser();
   const result = createDefaultSmokeResult(url);
@@ -1228,7 +1263,7 @@ export async function runSmokeTest({
     await page.waitForTimeout(POST_LOAD_DELAY);
     const loadTimeMs = Date.now() - start;
 
-    const inventory = await extractPageInventory(page);
+    const inventory = await extractPageInventory(page, criticalElements);
     const representativeFlowPage = await context.newPage();
     let representativeFlow = createEmptyFlowResult();
 
@@ -1251,6 +1286,7 @@ export async function runSmokeTest({
     const files = await assessFileTransfers(context.request, url, inventory);
     const dataIntegrity = assessDataIntegrity(forms.check, auth.check, search.check);
     const uiActions = assessUiActions(inventory);
+    const criticalCheck = assessCriticalElements(inventory);
     const security = assessSecurity(url, inventory, auth.check);
 
     const checks = [
@@ -1264,6 +1300,7 @@ export async function runSmokeTest({
       errorHandling,
       api.check,
       compatibility,
+      criticalCheck,
       files.check,
       security
     ];

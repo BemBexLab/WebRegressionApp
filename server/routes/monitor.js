@@ -3,6 +3,7 @@ import { Router } from "express";
 
 import { buildSupabaseStoragePublicPath, supabase } from "../lib/supabase.js";
 import { crawlSitePages } from "../services/crawlService.js";
+import { getDefaultWorkspace, isSupabaseUnavailableError } from "../services/platformDataService.js";
 import { compareDOM } from "../services/domDiffService.js";
 import { scanGitHubRepository } from "../services/githubRepoService.js";
 import { generateReportPdf } from "../services/reportService.js";
@@ -226,7 +227,22 @@ async function downloadArtifact(objectKey) {
   return Buffer.from(arrayBuffer);
 }
 
-async function getOrCreateWebsite(url) {
+async function getOrCreateWebsite(url, config = {}) {
+  const workspace = await getDefaultWorkspace();
+  const nextViewport = config.viewport === "mobile" ? "mobile" : "desktop";
+  const nextThresholdPercentage = Number.isFinite(config.thresholdPercentage)
+    ? Math.max(0, Math.min(100, Number(config.thresholdPercentage)))
+    : 0.3;
+  const nextIgnoredSelectors = Array.isArray(config.ignoredSelectors)
+    ? config.ignoredSelectors.filter((selector) => typeof selector === "string" && selector.trim()).map((selector) => selector.trim())
+    : [];
+  const nextMonitoringFrequency = typeof config.monitoringFrequency === "string"
+    ? config.monitoringFrequency.trim().toLowerCase()
+    : "daily";
+  const nextCriticalElements = Array.isArray(config.criticalElements)
+    ? config.criticalElements.filter((selector) => typeof selector === "string" && selector.trim()).map((selector) => selector.trim())
+    : [];
+  const nextGitHubUrl = config.githubUrl ? String(config.githubUrl).trim() : null;
   const { data: existing, error: selectError } = await supabase
     .from("websites")
     .select("*")
@@ -238,7 +254,54 @@ async function getOrCreateWebsite(url) {
   }
 
   if (existing) {
-    return existing;
+    const updates = {};
+
+    if (existing.viewport !== nextViewport) {
+      updates.viewport = nextViewport;
+    }
+
+    if (Number(existing.threshold_percentage) !== nextThresholdPercentage) {
+      updates.threshold_percentage = nextThresholdPercentage;
+    }
+
+    if (existing.monitoring_frequency !== nextMonitoringFrequency) {
+      updates.monitoring_frequency = nextMonitoringFrequency;
+    }
+
+    const storedCritical = Array.isArray(existing.critical_elements) ? existing.critical_elements : [];
+    if (JSON.stringify(storedCritical) !== JSON.stringify(nextCriticalElements)) {
+      updates.critical_elements = nextCriticalElements;
+    }
+
+    const storedIgnored = Array.isArray(existing.ignored_selectors) ? existing.ignored_selectors : [];
+    if (JSON.stringify(storedIgnored) !== JSON.stringify(nextIgnoredSelectors)) {
+      updates.ignored_selectors = nextIgnoredSelectors;
+    }
+
+    if (existing.workspace_id !== workspace.id) {
+      updates.workspace_id = workspace.id;
+    }
+
+    if (nextGitHubUrl && existing.github_url !== nextGitHubUrl) {
+      updates.github_url = nextGitHubUrl;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return existing;
+    }
+
+    const { data: updated, error: updateError } = await supabase
+      .from("websites")
+      .update(updates)
+      .eq("id", existing.id)
+      .select("*")
+      .single();
+
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
+
+    return updated;
   }
 
   const hostname = new URL(url).hostname;
@@ -247,11 +310,16 @@ async function getOrCreateWebsite(url) {
   const { data: created, error: insertError } = await supabase
     .from("websites")
     .insert({
+      workspace_id: workspace.id,
       url,
+      display_name: hostname,
       site_key: siteKey,
-      viewport: "desktop",
-      threshold_percentage: 0.3,
-      ignored_selectors: []
+      github_url: nextGitHubUrl,
+      viewport: nextViewport,
+      threshold_percentage: nextThresholdPercentage,
+      ignored_selectors: nextIgnoredSelectors,
+      monitoring_frequency: nextMonitoringFrequency,
+      critical_elements: nextCriticalElements
     })
     .select("*")
     .single();
@@ -427,7 +495,7 @@ function buildFailedPageResult({ pageUrl, error }) {
   return {
     pageId: `failed-${hashString(pagePath)}`,
     url: pageUrl,
-    path: pagePath,
+    path: pagePath || "/",
     baselineCreated: false,
     visualRegression: {
       mismatchPixels: 0,
@@ -563,12 +631,14 @@ async function scanPage({ website, pageUrl, timestamp, enableSmokeTests }) {
   const { html, imageBuffer } = await captureScreenshot({
     url: pageUrl,
     viewport: website.viewport || "desktop",
-    ignoredSelectors: Array.isArray(website.ignored_selectors) ? website.ignored_selectors : []
+    ignoredSelectors: Array.isArray(website.ignored_selectors) ? website.ignored_selectors : [],
+    criticalElements: Array.isArray(website.critical_elements) ? website.critical_elements : []
   });
   const functionalRegression = enableSmokeTests
     ? await runSmokeTest({
         url: pageUrl,
-        viewport: website.viewport || "desktop"
+        viewport: website.viewport || "desktop",
+        criticalElements: Array.isArray(website.critical_elements) ? website.critical_elements : []
       })
     : createDefaultSmokeResult(pageUrl);
 
@@ -695,7 +765,19 @@ async function scanPage({ website, pageUrl, timestamp, enableSmokeTests }) {
   };
 }
 
-async function runScanJob({ jobId, url, githubUrl, enableSmokeTests = false, workerId = null, attempt = 1 }) {
+async function runScanJob({
+  jobId,
+  url,
+  githubUrl,
+  enableSmokeTests = false,
+  viewport = "desktop",
+  thresholdPercentage = 0.3,
+  ignoredSelectors = [],
+  monitoringFrequency = "daily",
+  criticalElements = [],
+  workerId = null,
+  attempt = 1
+}) {
   try {
     updateJob(jobId, {
       status: "running",
@@ -706,7 +788,14 @@ async function runScanJob({ jobId, url, githubUrl, enableSmokeTests = false, wor
     await ensureScanBucket();
 
     const normalizedRootUrl = normalizePageUrl(url);
-    const website = await getOrCreateWebsite(normalizedRootUrl);
+    const website = await getOrCreateWebsite(normalizedRootUrl, {
+      viewport,
+      thresholdPercentage,
+      ignoredSelectors,
+      githubUrl,
+      monitoringFrequency,
+      criticalElements
+    });
     const siteName = website.site_key || sanitizeSiteName(new URL(normalizedRootUrl).hostname);
 
     updateJob(jobId, {
@@ -804,6 +893,11 @@ async function runScanJob({ jobId, url, githubUrl, enableSmokeTests = false, wor
       siteName,
       githubUrl: githubUrl || null,
       smokeTestingEnabled: enableSmokeTests,
+      websiteConfig: {
+        viewport: website.viewport || "desktop",
+        thresholdPercentage: Number(website.threshold_percentage) || 0.3,
+        ignoredSelectors: Array.isArray(website.ignored_selectors) ? website.ignored_selectors : []
+      },
       scanId: null,
       summary,
       functionalSummary,
@@ -841,6 +935,18 @@ async function runScanJob({ jobId, url, githubUrl, enableSmokeTests = false, wor
 
     if (scanInsertError) {
       throw new Error(scanInsertError.message);
+    }
+
+    const { error: websiteUpdateError } = await supabase
+      .from("websites")
+      .update({
+        last_scan_at: new Date().toISOString(),
+        github_url: githubUrl || website.github_url || null
+      })
+      .eq("id", website.id);
+
+    if (websiteUpdateError) {
+      throw new Error(websiteUpdateError.message);
     }
 
     updateJob(jobId, {
@@ -926,6 +1032,84 @@ router.get("/report/:scanId", async (req, res) => {
   }
 });
 
+router.get("/report/:scanId/csv", async (req, res) => {
+  try {
+    const { scanId } = req.params;
+
+    const { data, error } = await supabase
+      .from("scans")
+      .select("id, website_id, visual_status, visual_mismatch_percentage, created_at, report_payload")
+      .eq("id", scanId)
+      .maybeSingle();
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: "Scan not found." });
+    }
+
+    const report = data.report_payload ?? {};
+    const pageResults = Array.isArray(report.pageResults) ? report.pageResults : [];
+
+    const csvRows = pageResults.length > 0
+      ? pageResults.map((page) => ({
+          scan_id: data.id,
+          website_id: data.website_id,
+          site_name: report.siteName ?? "",
+          site_url: report.siteUrl ?? "",
+          page_path: page.path ?? "/",
+          page_url: page.url ?? "",
+          visual_status: page.visualRegression?.status ?? "",
+          mismatch_percentage: page.visualRegression?.mismatchPercentage ?? 0,
+          dom_changes: page.domRegression?.summary?.total ?? 0,
+          dom_severity: page.domRegression?.summary?.severity ?? "None",
+          functional_status: page.functionalRegression?.status ?? "",
+          response_code: page.functionalRegression?.responseCode ?? "",
+          load_time_ms: page.functionalRegression?.loadTimeMs ?? "",
+          broken_links: page.functionalRegression?.brokenLinks?.length ?? 0,
+          console_errors: page.functionalRegression?.consoleErrors?.length ?? 0,
+          forms_detected: page.functionalRegression?.form?.count ?? 0,
+          baseline_created: page.baselineCreated ? "Yes" : "No",
+          scan_date: data.created_at
+        }))
+      : [{
+          scan_id: data.id,
+          website_id: data.website_id,
+          site_name: report.siteName ?? "",
+          site_url: report.siteUrl ?? "",
+          page_path: "/",
+          page_url: report.siteUrl ?? "",
+          visual_status: data.visual_status,
+          mismatch_percentage: data.visual_mismatch_percentage,
+          dom_changes: report.domRegression?.summary?.total ?? 0,
+          dom_severity: report.domRegression?.summary?.severity ?? "None",
+          functional_status: report.functionalRegression?.status ?? "",
+          response_code: report.functionalRegression?.responseCode ?? "",
+          load_time_ms: report.functionalRegression?.loadTimeMs ?? "",
+          broken_links: report.functionalRegression?.brokenLinks?.length ?? 0,
+          console_errors: report.functionalRegression?.consoleErrors?.length ?? 0,
+          forms_detected: report.functionalRegression?.form?.count ?? 0,
+          baseline_created: report.baselineCreated ? "Yes" : "No",
+          scan_date: data.created_at
+        }];
+
+    const headers = Object.keys(csvRows[0]);
+    const escape = (val) => `"${String(val ?? "").replace(/"/g, '""')}"`;
+    const csvContent = [
+      headers.join(","),
+      ...csvRows.map((row) => headers.map((h) => escape(row[h])).join(","))
+    ].join("\n");
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=scan-report-${scanId}.csv`);
+    return res.send(csvContent);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Failed to export CSV report." });
+  }
+});
+
 router.get("/jobs/:jobId", async (req, res) => {
   const jobId = req.params.jobId;
   const memoryJob = scanJobs.get(jobId);
@@ -952,7 +1136,12 @@ router.get("/jobs/:jobId", async (req, res) => {
           jobId,
           url: requestPayload.url,
           githubUrl: requestPayload.githubUrl,
-          enableSmokeTests: Boolean(requestPayload.enableSmokeTests)
+          enableSmokeTests: Boolean(requestPayload.enableSmokeTests),
+          viewport: requestPayload.viewport,
+        thresholdPercentage: requestPayload.thresholdPercentage,
+        ignoredSelectors: requestPayload.ignoredSelectors,
+        monitoringFrequency: requestPayload.monitoringFrequency,
+        criticalElements: requestPayload.criticalElements
         });
       } catch {
         // The job record is already updated to failed; return the latest state below.
@@ -971,7 +1160,7 @@ router.get("/jobs/:jobId", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const { url, githubUrl, enableSmokeTests } = req.body ?? {};
+  const { url, githubUrl, enableSmokeTests, viewport, thresholdPercentage, ignoredSelectors, monitoringFrequency, criticalElements } = req.body ?? {};
 
   try {
     normalizePageUrl(url);
@@ -979,7 +1168,23 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "Invalid URL." });
   }
 
+  if (viewport && !["desktop", "mobile"].includes(viewport)) {
+    return res.status(400).json({ error: "Viewport must be either 'desktop' or 'mobile'." });
+  }
+
+  if (
+    thresholdPercentage !== undefined &&
+    (!Number.isFinite(Number(thresholdPercentage)) || Number(thresholdPercentage) < 0 || Number(thresholdPercentage) > 100)
+  ) {
+    return res.status(400).json({ error: "Threshold percentage must be a number between 0 and 100." });
+  }
+
+  if (ignoredSelectors !== undefined && !Array.isArray(ignoredSelectors)) {
+    return res.status(400).json({ error: "Ignored selectors must be an array of CSS selectors." });
+  }
+
   const jobId = randomUUID();
+  let persistedToSupabase = true;
   const job = {
     jobId,
     status: "queued",
@@ -994,7 +1199,17 @@ router.post("/", async (req, res) => {
       request: {
         url,
         githubUrl: githubUrl || null,
-        enableSmokeTests: Boolean(enableSmokeTests)
+        enableSmokeTests: Boolean(enableSmokeTests),
+        viewport: viewport === "mobile" ? "mobile" : "desktop",
+        thresholdPercentage:
+          thresholdPercentage === undefined ? 0.3 : Math.max(0, Math.min(100, Number(thresholdPercentage))),
+        ignoredSelectors: Array.isArray(ignoredSelectors)
+          ? ignoredSelectors.filter((selector) => typeof selector === "string" && selector.trim()).map((selector) => selector.trim())
+          : [],
+        monitoringFrequency: monitoringFrequency || "daily",
+        criticalElements: Array.isArray(criticalElements)
+          ? criticalElements.filter((selector) => typeof selector === "string" && selector.trim()).map((selector) => selector.trim())
+          : []
       }
     },
     error: null,
@@ -1006,7 +1221,14 @@ router.post("/", async (req, res) => {
     await createJobRecord(job);
   } catch (error) {
     const normalizedError = normalizeErrorMessage(error);
-    return res.status(500).json({ error: `Failed to create scan job: ${normalizedError}` });
+    if (!isSupabaseUnavailableError(error)) {
+      return res.status(500).json({ error: `Failed to create scan job: ${normalizedError}` });
+    }
+
+    persistedToSupabase = false;
+    updateJob(jobId, {
+      message: "Queued in degraded mode. Supabase is unavailable, so this run will not be persisted."
+    });
   }
 
   if (!isServerlessRuntime()) {
@@ -1015,14 +1237,24 @@ router.post("/", async (req, res) => {
         jobId,
         url,
         githubUrl,
-        enableSmokeTests: Boolean(enableSmokeTests)
+        enableSmokeTests: Boolean(enableSmokeTests),
+        viewport: viewport === "mobile" ? "mobile" : "desktop",
+        thresholdPercentage:
+          thresholdPercentage === undefined ? 0.3 : Math.max(0, Math.min(100, Number(thresholdPercentage))),
+        ignoredSelectors: Array.isArray(ignoredSelectors)
+          ? ignoredSelectors.filter((selector) => typeof selector === "string" && selector.trim()).map((selector) => selector.trim())
+          : [],
+        monitoringFrequency: monitoringFrequency || "daily",
+        criticalElements: Array.isArray(criticalElements)
+          ? criticalElements.filter((selector) => typeof selector === "string" && selector.trim()).map((selector) => selector.trim())
+          : []
       },
       handler: runScanJob,
       onStart: ({ workerId, activeWorkers, maxWorkers, queuedJobs }) => {
         updateJob(jobId, {
           status: "running",
           progressPercentage: 2,
-          message: `Assigned to ${workerId}. ${activeWorkers}/${maxWorkers} worker(s) active, ${queuedJobs} job(s) waiting.`
+          message: `${persistedToSupabase ? "Assigned" : "Assigned in degraded mode"} to ${workerId}. ${activeWorkers}/${maxWorkers} worker(s) active, ${queuedJobs} job(s) waiting.`
         });
       },
       onRetry: ({ workerId, attempt, retriesRemaining, error }) => {
@@ -1048,12 +1280,14 @@ router.post("/", async (req, res) => {
       }
     });
     updateJob(jobId, {
-      message: `Queued in worker pool. ${workerSnapshot.queueDepth} job(s) ahead.`,
+      message: `${persistedToSupabase ? "Queued in worker pool" : "Queued in worker pool without Supabase persistence"}. ${workerSnapshot.queueDepth} job(s) ahead.`,
       progressPercentage: 1
     });
   } else {
     updateJob(jobId, {
-      message: "Queued. Scan will start on first status poll.",
+      message: persistedToSupabase
+        ? "Queued. Scan will start on first status poll."
+        : "Queued in degraded mode. Scan will start on first status poll, but results cannot be persisted while Supabase is unavailable.",
       progressPercentage: 1
     });
   }

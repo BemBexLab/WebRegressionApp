@@ -3,6 +3,8 @@ import express, { json } from "express";
 import cors from "cors";
 
 import monitorRoutes from "./routes/monitor.js";
+import platformRoutes from "./routes/platform.js";
+import websiteRoutes from "./routes/websites.js";
 
 const app = express();
 const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
@@ -26,7 +28,7 @@ const corsOptions = {
     }
     return callback(new Error(`Origin not allowed by CORS: ${origin}`));
   },
-  methods: ["GET", "POST", "OPTIONS"],
+  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 };
 
@@ -35,6 +37,8 @@ app.options(/.*/, cors(corsOptions));
 app.use(json({ limit: process.env.REQUEST_BODY_LIMIT || "20mb" }));
 
 app.use("/api/monitor", monitorRoutes);
+app.use("/api/platform", platformRoutes);
+app.use("/api/websites", websiteRoutes);
 
 app.get("/api/health", (req, res) => {
   res.send("Website Regression Monitoring API");

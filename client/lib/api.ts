@@ -1,4 +1,5 @@
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "";
+const RAW_INTERNAL_API_BASE = process.env.INTERNAL_API_BASE_URL?.trim() || "";
 const RAW_SUPABASE_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
 
 function normalizeApiBase(input: string) {
@@ -27,35 +28,100 @@ function resolveFallbackApiBase() {
 
 const FALLBACK_API_BASE = resolveFallbackApiBase();
 const API_BASE = normalizeApiBase(RAW_API_BASE);
+const INTERNAL_API_BASE = normalizeApiBase(RAW_INTERNAL_API_BASE);
 const SUPABASE_BASE = normalizeApiBase(RAW_SUPABASE_BASE);
 
-async function apiFetch(path: string, init?: RequestInit) {
-  const base = API_BASE || FALLBACK_API_BASE;
-  if (!base) {
+function resolveRequestUrl(path: string) {
+  if (typeof window !== "undefined") {
+    return path;
+  }
+
+  const serverBase = API_BASE || INTERNAL_API_BASE || FALLBACK_API_BASE;
+  if (!serverBase) {
     throw new Error(
-      "Missing NEXT_PUBLIC_API_BASE_URL in production. Set it to your backend origin, e.g. https://your-backend.example.com"
+      "Missing API base URL. Set NEXT_PUBLIC_API_BASE_URL or INTERNAL_API_BASE_URL to your backend origin."
     );
   }
-  const primaryUrl = `${base}${path}`;
+
+  return `${serverBase}${path}`;
+}
+
+async function apiFetch(path: string, init?: RequestInit) {
+  const primaryUrl = resolveRequestUrl(path);
 
   try {
     return await fetch(primaryUrl, init);
   } catch (primaryError) {
-    if (!FALLBACK_API_BASE || base === FALLBACK_API_BASE) {
+    if (typeof window !== "undefined") {
+      throw primaryError;
+    }
+
+    const fallbackBase = INTERNAL_API_BASE || FALLBACK_API_BASE;
+    if (!fallbackBase || primaryUrl === `${fallbackBase}${path}`) {
       throw primaryError;
     }
 
     try {
-      return await fetch(`${FALLBACK_API_BASE}${path}`, init);
+      return await fetch(`${fallbackBase}${path}`, init);
     } catch {
       throw new Error(
-        `Network error while calling ${path}. Ensure backend is running on http://localhost:5000 and restart client dev server.`
+        `Network error while calling ${path}. Ensure the backend is reachable from the Next.js app.`
       );
     }
   }
 }
 
-export type MonitorPayload = { url: string; githubUrl?: string; enableSmokeTests?: boolean };
+export type MonitorPayload = {
+  url: string;
+  githubUrl?: string;
+  enableSmokeTests?: boolean;
+  viewport?: "desktop" | "mobile";
+  thresholdPercentage?: number;
+  ignoredSelectors?: string[];
+  monitoringFrequency?: string;
+  criticalElements?: string[];
+};
+
+export type WebsitePayload = {
+  url: string;
+  displayName: string;
+  githubUrl?: string;
+  viewport: "desktop" | "mobile";
+  monitoringFrequency: string;
+  thresholdPercentage: number;
+  loadTimeThresholdMs: number;
+  ignoredSelectors: string[];
+  criticalElements: string[];
+  monitoredPages: string[];
+  alertChannels: string[];
+  active: boolean;
+};
+
+export type WebsiteRecord = {
+  id: string;
+  workspace_id: string | null;
+  site_key: string;
+  url: string;
+  display_name: string | null;
+  github_url: string | null;
+  viewport: "desktop" | "mobile";
+  monitoring_frequency: string;
+  threshold_percentage: number;
+  load_time_threshold_ms: number;
+  ignored_selectors: string[];
+  critical_elements: string[];
+  monitored_pages: string[];
+  alert_channels: string[];
+  active: boolean;
+  last_scan_at: string | null;
+  updated_at: string;
+  created_at?: string;
+};
+
+export type WebsiteDetailResponse = {
+  website: WebsiteRecord;
+  scans: ScanRecord[];
+};
 
 export type ScanJobStartResponse = {
   jobId: string;
@@ -217,6 +283,11 @@ export type MonitorResponse = {
   siteName: string;
   githubUrl: string | null;
   smokeTestingEnabled: boolean;
+  websiteConfig: {
+    viewport: "desktop" | "mobile";
+    thresholdPercentage: number;
+    ignoredSelectors: string[];
+  };
   summary: {
     totalPages: number;
     newPages: number;
@@ -296,6 +367,159 @@ export type MonitorResponse = {
   } | null;
 };
 
+export type DashboardResponse = {
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  plan: {
+    key: string;
+    name: string;
+    max_websites: number;
+    max_pages: number;
+    scan_frequency: string;
+    team_members: number;
+    priority_processing: boolean;
+    monthly_price_cents?: number;
+    yearly_price_cents?: number;
+  } | null;
+  overview: {
+    totalWebsites: number;
+    totalPagesMonitored: number;
+    activeRegressions: number;
+    performanceWarnings: number;
+    lastScanAt: string | null;
+    teamMembers: number;
+  };
+  trend: Array<{
+    date: string;
+    mismatch: number;
+    regressions: number;
+    warnings: number;
+  }>;
+  websites: Array<{
+    id: string;
+    displayName: string;
+    url: string;
+    active: boolean;
+    monitoringFrequency: string;
+    viewport: "desktop" | "mobile";
+    status: string;
+    lastScanAt: string | null;
+    highestMismatch: number;
+    pages: string[];
+    loadTimeMs: number | null;
+  }>;
+  workerSystem: {
+    queueDepth: number;
+    activeWorkers: number;
+    maxWorkers: number;
+    autoScaling: boolean;
+    distributedReady: boolean;
+    retryLimit: number;
+    timeoutMs: number;
+  };
+};
+
+export type ReportsResponse = {
+  schedule: {
+    dailySummaryEmail: boolean;
+    weeklyReport: boolean;
+    publicShareLinks: boolean;
+  };
+  reports: Array<{
+    scanId: number;
+    websiteId: string;
+    websiteName: string;
+    visualStatus: "Pass" | "Warning" | "Critical" | string;
+    mismatchPercentage: number;
+    createdAt: string;
+    totalPages: number;
+    brokenLinks: number;
+    failedPages: number;
+    exportFormats: string[];
+    publicShareEnabled: boolean;
+  }>;
+};
+
+export type AlertsResponse = {
+  channels: Array<{
+    id: string;
+    workspace_id?: string;
+    type: string;
+    name: string;
+    target: string;
+    triggers: string[];
+    enabled?: boolean;
+  }>;
+  triggers: string[];
+  incidents: Array<{
+    id: string;
+    type: string;
+    severity: string;
+    websiteName: string;
+    pageUrl: string | null;
+    timestamp: string;
+  }>;
+};
+
+export type BillingResponse = {
+  currentPlan: DashboardResponse["plan"];
+  usage: {
+    websites: number;
+    pages: number;
+    teamMembers: number;
+  };
+  entitlements: {
+    maxWebsites: number;
+    maxPages: number;
+    teamMembers: number;
+    priorityProcessing: boolean;
+  };
+  plans: Array<{
+    key: string;
+    name: string;
+    max_websites: number;
+    max_pages: number;
+    scan_frequency: string;
+    team_members: number;
+    priority_processing: boolean;
+    monthly_price_cents: number;
+    yearly_price_cents: number;
+    monthlyPrice: number;
+    yearlyPrice: number;
+  }>;
+  subscriptionFeatures: string[];
+};
+
+export type AdminResponse = {
+  globalStats: {
+    totalUsers: number;
+    totalWorkspaces: number;
+    totalWebsites: number;
+    totalScans: number;
+  };
+  workerSystem: DashboardResponse["workerSystem"];
+  featureFlags: Array<{
+    key: string;
+    label: string;
+    enabled: boolean;
+    scope: string;
+  }>;
+  recentJobs: Array<{
+    job_id: string;
+    site_name: string | null;
+    status: "queued" | "running" | "completed" | "failed" | string;
+    completed_pages: number;
+    total_pages: number;
+    progress_percentage: number;
+    updated_at: string;
+    message: string;
+    error: string | null;
+  }>;
+};
+
 export function imageUrl(path: string | null) {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return path;
@@ -307,7 +531,18 @@ export function imageUrl(path: string | null) {
     }
     return `${SUPABASE_BASE}${path}`;
   }
-  return `${API_BASE || FALLBACK_API_BASE}${path}`;
+  if (typeof window !== "undefined") {
+    return path;
+  }
+
+  const serverBase = API_BASE || INTERNAL_API_BASE || FALLBACK_API_BASE;
+  if (!serverBase) {
+    throw new Error(
+      "Missing API base URL. Set NEXT_PUBLIC_API_BASE_URL or INTERNAL_API_BASE_URL to your backend origin."
+    );
+  }
+
+  return `${serverBase}${path}`;
 }
 
 export async function startWebsiteScan(payload: MonitorPayload): Promise<ScanJobStartResponse> {
@@ -348,6 +583,138 @@ export async function fetchScanHistory(websiteId: string): Promise<ScanRecord[]>
 
   const body = await res.json();
   return (body.scans ?? []) as ScanRecord[];
+}
+
+export async function fetchDashboard(): Promise<DashboardResponse> {
+  const res = await apiFetch("/api/platform/dashboard");
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to load dashboard.");
+  }
+
+  return res.json();
+}
+
+export async function fetchReports(): Promise<ReportsResponse> {
+  const res = await apiFetch("/api/platform/reports");
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to load reports.");
+  }
+
+  return res.json();
+}
+
+export async function fetchAlerts(): Promise<AlertsResponse> {
+  const res = await apiFetch("/api/platform/alerts");
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to load alerts.");
+  }
+
+  return res.json();
+}
+
+export async function fetchBilling(): Promise<BillingResponse> {
+  const res = await apiFetch("/api/platform/billing");
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to load billing.");
+  }
+
+  return res.json();
+}
+
+export async function fetchAdmin(): Promise<AdminResponse> {
+  const res = await apiFetch("/api/platform/admin");
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to load admin overview.");
+  }
+
+  return res.json();
+}
+
+export async function fetchWebsites(): Promise<WebsiteRecord[]> {
+  const res = await apiFetch("/api/websites");
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to load websites.");
+  }
+
+  const body = await res.json();
+  return (body.websites ?? []) as WebsiteRecord[];
+}
+
+export async function fetchWebsiteDetail(websiteId: string): Promise<WebsiteDetailResponse> {
+  const res = await apiFetch(`/api/websites/${websiteId}`);
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to load website detail.");
+  }
+
+  return res.json();
+}
+
+export async function createWebsite(payload: WebsitePayload): Promise<WebsiteRecord> {
+  const res = await apiFetch("/api/websites", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to create website.");
+  }
+
+  return res.json();
+}
+
+export async function updateWebsite(websiteId: string, payload: WebsitePayload): Promise<WebsiteRecord> {
+  const res = await apiFetch(`/api/websites/${websiteId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to update website.");
+  }
+
+  return res.json();
+}
+
+export async function deleteWebsite(websiteId: string): Promise<void> {
+  const res = await apiFetch(`/api/websites/${websiteId}`, { method: "DELETE" });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to delete website.");
+  }
+}
+
+export async function exportScanReportCsv(scanId: number): Promise<Blob> {
+  const res = await apiFetch(`/api/monitor/report/${scanId}/csv`);
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to export CSV report.");
+  }
+
+  return res.blob();
 }
 
 export async function exportScanReport(result: MonitorResponse): Promise<Blob> {

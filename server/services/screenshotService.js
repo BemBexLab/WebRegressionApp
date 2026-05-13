@@ -84,7 +84,8 @@ async function stabilizePage(page) {
 export async function captureScreenshot({
   url,
   viewport = "desktop",
-  ignoredSelectors = []
+  ignoredSelectors = [],
+  criticalElements = []
 }) {
   let lastError = null;
 

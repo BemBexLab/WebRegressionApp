@@ -1,23 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --background: #06131a;
-  --foreground: #ecf7f8;
-  --surface: rgba(8, 28, 36, 0.72);
-  --surface-strong: rgba(8, 23, 31, 0.92);
-  --surface-soft: rgba(216, 245, 247, 0.08);
-  --line: rgba(190, 235, 236, 0.16);
-  --line-strong: rgba(190, 235, 236, 0.28);
-  --accent: #7ef0d6;
-  --accent-strong: #0fbf9b;
-  --ink: #05232b;
+  --background: #f3f2ed;
+  --foreground: #16181c;
+  --muted: #5b636d;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-strong: rgba(255, 255, 255, 0.92);
+  --surface-soft: rgba(23, 29, 37, 0.04);
+  --line: rgba(16, 20, 26, 0.09);
+  --line-strong: rgba(16, 20, 26, 0.14);
+  --accent: #9af2d0;
+  --accent-strong: #1c8b74;
+  --accent-ink: #113e37;
+  --shadow: 0 28px 90px rgba(20, 25, 33, 0.08);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
 }
 
 * {
@@ -31,13 +33,13 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
+  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
   min-height: 100vh;
   background-image:
-    radial-gradient(circle at top left, rgba(126, 240, 214, 0.22), transparent 28%),
-    radial-gradient(circle at 82% 14%, rgba(73, 147, 255, 0.2), transparent 24%),
-    radial-gradient(circle at 50% 120%, rgba(15, 191, 155, 0.18), transparent 34%),
-    linear-gradient(180deg, #08141c 0%, #06131a 42%, #041018 100%);
+    radial-gradient(circle at top left, rgba(154, 242, 208, 0.3), transparent 22%),
+    radial-gradient(circle at 88% 8%, rgba(174, 234, 246, 0.38), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(255, 220, 194, 0.22), transparent 28%),
+    linear-gradient(180deg, #f8f6f1 0%, #f3f2ed 42%, #eeece5 100%);
 }
 
 body::before {
@@ -46,49 +48,87 @@ body::before {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+    linear-gradient(rgba(23, 29, 37, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 29, 37, 0.035) 1px, transparent 1px);
+  background-size: 52px 52px;
   mask-image: radial-gradient(circle at center, black 38%, transparent 88%);
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 ::selection {
-  background: rgba(126, 240, 214, 0.35);
-  color: white;
+  background: rgba(154, 242, 208, 0.55);
+  color: #10211f;
 }
 
-.glass-panel {
+.panel {
   background: var(--surface);
   border: 1px solid var(--line);
-  box-shadow:
-    0 20px 60px rgba(0, 0, 0, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(22px);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(20px);
 }
 
-.glass-panel-strong {
+.panel-strong {
   background: var(--surface-strong);
   border: 1px solid var(--line-strong);
   box-shadow:
-    0 28px 80px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    0 34px 100px rgba(18, 24, 31, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(22px);
 }
 
 .soft-grid {
   background-image:
-    linear-gradient(rgba(190, 235, 236, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(190, 235, 236, 0.05) 1px, transparent 1px);
-  background-size: 28px 28px;
+    linear-gradient(rgba(23, 29, 37, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 29, 37, 0.045) 1px, transparent 1px);
+  background-size: 30px 30px;
 }
 
 .hero-orb {
   position: absolute;
   border-radius: 9999px;
-  filter: blur(18px);
-  opacity: 0.5;
+  filter: blur(22px);
+  opacity: 0.75;
   animation: drift 14s ease-in-out infinite;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.section-title {
+  color: var(--foreground);
+  font-size: clamp(1.75rem, 3vw, 3.8rem);
+  font-weight: 600;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.tag {
+  border: 1px solid rgba(16, 20, 26, 0.08);
+  border-radius: 9999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  padding: 0.45rem 0.75rem;
+  text-transform: uppercase;
+}
+
+.metric-card {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(16, 20, 26, 0.08);
+  border-radius: 1.4rem;
+  box-shadow: 0 16px 50px rgba(18, 24, 31, 0.05);
+}
+
+.text-muted {
+  color: var(--muted);
 }
 
 .reveal-up {
@@ -112,7 +152,7 @@ body::before {
     transform: translate3d(0, 0, 0) scale(1);
   }
   50% {
-    transform: translate3d(0, -12px, 0) scale(1.04);
+    transform: translate3d(0, -12px, 0) scale(1.06);
   }
 }
 
